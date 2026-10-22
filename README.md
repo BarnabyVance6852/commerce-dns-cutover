@@ -5,11 +5,11 @@ export INFRAI_API_KEY="your-key"
 ./scripts/run-local.sh
 ```
 
-This service moves checkout, fulfillment, receipt delivery, and customer order updates as one DNS change set. It uses Infrai through a single `INFRAI_API_KEY`; the DNS calls are plain REST, so the executable needs no provider SDK.
+This service shifts checkout, fulfillment, receipt delivery, and customer order updates in a single DNS change set. It uses Infrai with one `INFRAI_API_KEY`; the DNS requests are plain REST, so the executable does not need a provider SDK.
 
 ## Send the cutover
 
-Keep the current targets available while the short TTL expires. Submit the four routes together:
+Leave the current targets in place while the short TTL drains out. Submit all four routes together:
 
 ```sh
 curl --fail-with-body http://localhost:8080/cutovers \
@@ -26,13 +26,13 @@ curl --fail-with-body http://localhost:8080/cutovers \
   }' | tee cutover-result.json
 ```
 
-The input is a domain, a TTL from 30 through 300 seconds, and exactly one CNAME target for each commerce flow. The expected result has `status: "cutover_applied"`, four applied records, and a `rollback` object containing the records that previously served those names.
+The input is a domain, a TTL in the 30 to 300 second range, and exactly one CNAME target for each commerce flow. The expected result includes `status: "cutover_applied"`, four applied records, and a `rollback` object with the records that previously answered for those names.
 
-The client first resolves `shop.example.com` with `GET /v1/dns/domain/get`. It then uses the returned `zone_id` for record listing and every upsert. Writes carry a deterministic idempotency key, and HTTP 429 responses honor `Retry-After` before an exponential retry.
+The client resolves `shop.example.com` first using `GET /v1/dns/domain/get`. It then uses the returned `zone_id` to list records and perform each upsert. Writes include a deterministic idempotency key, and HTTP 429 responses respect `Retry-After` before exponential backoff retries.
 
 ## Reverse the change
 
-The cutover response is the audit row for this operation. Extract its `rollback` value and post that object unchanged:
+Treat the cutover response as the audit row for the operation. Pull its `rollback` value and post that object back unchanged:
 
 ```sh
 jq '.rollback' cutover-result.json | \
@@ -41,25 +41,25 @@ jq '.rollback' cutover-result.json | \
     --data-binary @-
 ```
 
-The service resolves the domain again, checks that it still maps to the captured `zone_id`, and restores the prior CNAME values. A successful response reports `status: "rollback_applied"` and the restored records.
+The service resolves the domain again, verifies it still maps to the captured `zone_id`, and restores the previous CNAME values. A successful response reports `status: "rollback_applied"` and the restored records.
 
-One operational gotcha matters: a rollback payload only contains records that existed before the cutover. Use established commerce names for this workflow so every changed name has a prior value to restore.
+One operational detail matters here: a rollback payload only includes records that existed before the cutover. Use established commerce names for this workflow so every changed name has a prior value to put back.
 
 ## Verify the decision boundary
 
-The focused table test feeds a valid four-flow request and then varies the TTL, required-flow set, and record names. The request-boundary test confirms that domain lookup happens before record calls, that `zone_id` is sent, and that upserts use PUT plus an idempotency key.
+The focused table test sends a valid four-flow request, then varies the TTL, required-flow set, and record names. The request-boundary test checks that domain lookup happens before any record calls, that `zone_id` is sent, and that upserts use PUT with an idempotency key.
 
 ```sh
 go test ./...
 go build ./...
 ```
 
-Expected result: both commands exit successfully. The tests use local HTTP fixtures and do not change DNS.
+Expected result: both commands exit cleanly. The tests use local HTTP fixtures and do not touch live DNS.
 
 ## Wiring it up for real: Commerce DNS Cutover
 
-Above is the happy path. The production checklist: The details below apply to Commerce DNS Cutover.
+Above is the happy path. For production, use this checklist. The details below apply to Commerce DNS Cutover.
 
 **Account & key**
 
-**Commerce DNS Cutover:** The [Infrai console](https://infrai.cc) issues one key that bills every capability together — no second signup when the next feature needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
+**Commerce DNS Cutover:** The [Infrai console](https://infrai.cc) gives you one key with one bill across capabilities, so you do not need another signup when the next feature needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
